@@ -31,8 +31,6 @@ import static android.hardware.biometrics.BiometricAuthenticator.TYPE_NONE;
 import static android.hardware.biometrics.BiometricConstants.BIOMETRIC_ERROR_CANCELED;
 import static android.hardware.biometrics.BiometricManager.Authenticators;
 
-import static com.android.server.biometrics.sensors.fingerprint.aidl.FingerprintProvider.getWorkaroundSensorProps;
-
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.AppOpsManager;
@@ -77,6 +75,21 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import android.hardware.display.DisplayManager;
+
+import android.graphics.Point;
+import android.util.DisplayMetrics;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.PrintWriter;
+
+import android.os.FileObserver;
+import android.os.Build;
+
+
+import vendor.xiaomi.hardware.fingerprintextension.V1_0.IXiaomiFingerprint;
 /**
  * System service that provides an interface for authenticating with biometrics and
  * PIN/pattern/password to BiometricPrompt and lock screen.
@@ -94,6 +107,10 @@ public class AuthService extends SystemService {
     private IBiometricService mBiometricService;
     @VisibleForTesting
     final IAuthService.Stub mImpl;
+
+    private FileObserver fodFileObserver = null;
+
+    private IXiaomiFingerprint mXiaomiFingerprint = null;
 
     /**
      * Class for injecting dependencies into AuthService.
@@ -652,6 +669,39 @@ public class AuthService extends SystemService {
         registerAuthenticators(hidlConfigs);
 
         mInjector.publishBinderService(this, mImpl);
+
+        try {
+            mXiaomiFingerprint = IXiaomiFingerprint.getService();
+            android.util.Log.e("PHH", "Got xiaomi fingerprint HAL");
+        } catch (Exception e) {
+            android.util.Log.e("PHH", "Failed getting xiaomi fingerprint HAL", e);
+        }
+
+        String xiaomiFodPressedStatusPath = "/sys/class/touch/touch_dev/fod_press_status";
+        if (new File(xiaomiFodPressedStatusPath).exists()) {
+            fodFileObserver = new FileObserver(xiaomiFodPressedStatusPath, FileObserver.MODIFY) {
+                @Override
+                public void onEvent(int event, String path) {
+                    String isFodPressed = readFile(xiaomiFodPressedStatusPath);
+                    Slog.d("PHH-Enroll", "Fod pressed status: " + isFodPressed);
+                    Slog.d("PHH-Enroll", "Within xiaomi scenario for FOD");
+
+                    try {
+                        if ("0".equals(isFodPressed)) {
+                            Slog.d("PHH-Enroll", "Fod un-pressed!");
+                            mXiaomiFingerprint.extCmd(4, 0);
+                        } else if ("1".equals(isFodPressed)) {
+                            Slog.d("PHH-Enroll", "Fod pressed!");
+                            mXiaomiFingerprint.extCmd(4, 1);
+                        }
+                    } catch (Exception e) {
+                        Slog.d("PHH-Enroll", "Failed Xiaomi async extcmd", e);
+                    }
+                }
+            };
+            fodFileObserver.startWatching();
+        }
+
     }
 
     /**
@@ -779,14 +829,31 @@ public class AuthService extends SystemService {
     private FingerprintSensorPropertiesInternal getHidlFingerprintSensorProps(int sensorId,
             @BiometricManager.Authenticators.Types int strength) {
         // The existence of config_udfps_sensor_props indicates that the sensor is UDFPS.
-        final int[] udfpsProps = getContext().getResources().getIntArray(
+        int[] udfpsProps = getContext().getResources().getIntArray(
                 com.android.internal.R.array.config_udfps_sensor_props);
 
-        // Non-empty workaroundLocations indicates that the sensor is SFPS.
-        final List<SensorLocationInternal> workaroundLocations =
-                getWorkaroundSensorProps(getContext());
+        boolean isUdfps = !ArrayUtils.isEmpty(udfpsProps);
 
-        final boolean isUdfps = !ArrayUtils.isEmpty(udfpsProps);
+        DisplayManager mDM = (DisplayManager) getContext().getSystemService(Context.DISPLAY_SERVICE);
+        Point displayRealSize = new Point();
+        DisplayMetrics displayMetrics = new DisplayMetrics();
+        mDM.getDisplay(0).getRealSize(displayRealSize);
+        mDM.getDisplay(0).getMetrics(displayMetrics);
+
+        String[] xiaomiLocation = android.os.SystemProperties.get("persist.vendor.sys.fp.fod.location.X_Y", "").split(",");
+        if (xiaomiLocation.length != 2)
+            xiaomiLocation = android.os.SystemProperties.get("persist.sys.fp.fod.location.X_Y", "").split(",");
+        String[] xiaomiSize = android.os.SystemProperties.get("persist.vendor.sys.fp.fod.size.width_height", "").split(",");
+        if (xiaomiSize.length != 2)
+            xiaomiSize = android.os.SystemProperties.get("persist.sys.fp.fod.size.width_height", "").split(",");
+        if (xiaomiSize.length == 2 && xiaomiLocation.length == 2) {
+            udfpsProps = new int[3];
+            udfpsProps[0] = (int) displayRealSize.x / 2;
+            udfpsProps[1] = Integer.parseInt(xiaomiLocation[1]);
+            udfpsProps[2] = Integer.parseInt(xiaomiSize[0]) / 2;
+            udfpsProps[1] += udfpsProps[2];
+            isUdfps = true;
+        }
 
         // config_is_powerbutton_fps indicates whether device has a power button fingerprint sensor.
         final boolean isPowerbuttonFps = getContext().getResources().getBoolean(
@@ -815,12 +882,6 @@ public class AuthService extends SystemService {
                     resetLockoutRequiresHardwareAuthToken,
                     List.of(new SensorLocationInternal("" /* display */, udfpsProps[0],
                             udfpsProps[1], udfpsProps[2])));
-        } else if (!workaroundLocations.isEmpty()) {
-            return new FingerprintSensorPropertiesInternal(sensorId,
-                    Utils.authenticatorStrengthToPropertyStrength(strength), maxEnrollmentsPerUser,
-                    componentInfo, sensorType, false /* halControlsIllumination */,
-                    resetLockoutRequiresHardwareAuthToken,
-                    workaroundLocations);
         } else {
             return new FingerprintSensorPropertiesInternal(sensorId,
                     Utils.authenticatorStrengthToPropertyStrength(strength), maxEnrollmentsPerUser,
@@ -853,5 +914,36 @@ public class AuthService extends SystemService {
                 Utils.authenticatorStrengthToPropertyStrength(strength), maxEnrollmentsPerUser,
                 componentInfo, resetLockoutRequiresHardwareAuthToken,
                 resetLockoutRequiresChallenge);
+    }
+
+    private static void writeFile(String path, String value) {
+        try {
+            PrintWriter writer = new PrintWriter(path, "UTF-8");
+            writer.println(value);
+            writer.close();
+        } catch (Exception e) {
+            android.util.Log.d("PHH", "Failed writing to " + path + ": " + value);
+        }
+    }
+
+    private static void writeFile(File file, String value) {
+        try {
+            PrintWriter writer = new PrintWriter(file, "UTF-8");
+            writer.println(value);
+            writer.close();
+        } catch (Exception e) {
+            android.util.Log.d("PHH", "Failed writing to " + file + ": " + value);
+        }
+    }
+
+    private static String readFile(String path) {
+        try {
+            File f = new File(path);
+
+            BufferedReader b = new BufferedReader(new FileReader(f));
+            return b.readLine();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

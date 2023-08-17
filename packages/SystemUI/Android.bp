@@ -179,6 +179,9 @@ android_library {
         "motion_tool_lib",
         "vendor.lineage.powershare-V1.0-java",
         "faceunlock_framework",
+        "vendor.goodix.hardware.biometrics.fingerprint-V2.1-java",
+        "vendor.xiaomi.hw.touchfeature-V1.0-java",
+        "vendor.xiaomi.hardware.fingerprintextension-V1.0-java"
     ],
     manifest: "AndroidManifest.xml",
     additional_manifests: ["LineageManifest.xml"],

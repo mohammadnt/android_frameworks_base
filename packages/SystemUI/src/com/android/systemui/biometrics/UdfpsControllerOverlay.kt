@@ -121,9 +121,10 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         flags = (Utils.FINGERPRINT_OVERLAY_LAYOUT_PARAM_FLAGS or
                 WindowManager.LayoutParams.FLAG_DIM_BEHIND or
-                WindowManager.LayoutParams.FLAG_SPLIT_TOUCH)
-        privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
+                WindowManager.LayoutParams.FLAG_SPLIT_TOUCH) or
+                WindowManager.LayoutParams.FLAG_DIM_BEHIND
         dimAmount = 0.0f
+        privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
 
         // Avoid announcing window title.
         accessibilityTitle = " "
@@ -131,12 +132,6 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
         if (featureFlags.isEnabled(Flags.UDFPS_NEW_TOUCH_DETECTION)) {
             inputFeatures = WindowManager.LayoutParams.INPUT_FEATURE_SPY
         }
-    }
-
-    fun updateDimAmount(newDimAmount: Float): Float {
-        coreLayoutParams.dimAmount = newDimAmount
-        windowManager.updateViewLayout(overlayView, coreLayoutParams)
-        return newDimAmount
     }
 
     /** A helper if the [requestReason] was due to enrollment. */
@@ -198,6 +193,9 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                     windowManager.addView(this, coreLayoutParams.updateDimensions(animation))
                     sensorRect = sensorBounds
                     touchExplorationEnabled = accessibilityManager.isTouchExplorationEnabled
+                    dimUpdate = {
+                        windowManager.updateViewLayout(this, coreLayoutParams.updateDimensions(animation).apply { dimAmount = it })
+                    }
                     overlayTouchListener = TouchExplorationStateChangeListener {
                         if (accessibilityManager.isTouchExplorationEnabled) {
                             setOnHoverListener { v, event -> onTouch(v, event, true) }
