@@ -63,6 +63,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.os.Handler;
 import android.provider.Settings;
 import android.util.Slog;
 
@@ -90,6 +91,7 @@ import android.os.Build;
 
 
 import vendor.xiaomi.hardware.fingerprintextension.V1_0.IXiaomiFingerprint;
+import vendor.xiaomi.hw.touchfeature.V1_0.ITouchFeature;
 /**
  * System service that provides an interface for authenticating with biometrics and
  * PIN/pattern/password to BiometricPrompt and lock screen.
@@ -690,9 +692,30 @@ public class AuthService extends SystemService {
                         if ("0".equals(isFodPressed)) {
                             Slog.d("PHH-Enroll", "Fod un-pressed!");
                             mXiaomiFingerprint.extCmd(4, 0);
+                            Slog.i("PHH-Enroll", "onScreenTurnedOff: LOCKED");
+                            try {
+                                var res = ITouchFeature.getService().setTouchMode(0, 10, 0);
+
+                                if(res != 0){
+                                    Slog.d("PHH-Enroll", "SetTouchMode 10,1 was NOT executed successfully. Res is " + res);
+                                }
+                            }catch (Exception e){
+                                Slog.i("PHH-Enroll", "ITouchFeature setTouchMode eror: ", e);
+
+                            }
                         } else if ("1".equals(isFodPressed)) {
                             Slog.d("PHH-Enroll", "Fod pressed!");
                             mXiaomiFingerprint.extCmd(4, 1);
+                            try {
+                                var res = ITouchFeature.getService().setTouchMode(0, 10, 1);
+
+                                if(res != 0){
+                                    Slog.d("PHH-Enroll", "SetTouchMode 10,1 was NOT executed successfully. Res is " + res);
+                                }
+                            }catch (Exception e){
+                                Slog.i("PHH-Enroll", "ITouchFeature setTouchMode eror: ", e);
+
+                            }
                         }
                     } catch (Exception e) {
                         Slog.d("PHH-Enroll", "Failed Xiaomi async extcmd", e);

@@ -1601,8 +1601,8 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
                 if (vendorCode < msgArray.length) {
                     return msgArray[vendorCode];
                 }
+                return "Fod Working!";
             }
-                break;
             case FINGERPRINT_ACQUIRED_START:
                 return null;
         }
